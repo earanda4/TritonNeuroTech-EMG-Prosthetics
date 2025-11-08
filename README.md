@@ -13,5 +13,10 @@
 - Siddhant Gulati - Sid6154
 - Rishab Kolan - rkolan-alt
 # Links
-[Basic Content Guide](https://docs.google.com/document/d/1KJiq6qIKDhxJ-azZowQby1tJ9o-k_Vsh72BCCRTu_YU/edit?tab=t.0)
-[Members Managing Document](https://docs.google.com/document/d/1dWdjA4xGRYG7SnRga2GyC9wFmkC64npIvnQQYizD2NQ/edit?tab=t.0)
+[Basic Content Guide
+](https://docs.google.com/document/d/1KJiq6qIKDhxJ-azZowQby1tJ9o-k_Vsh72BCCRTu_YU/edit?tab=t.0)
+
+[Members Managing Document
+](https://docs.google.com/document/d/1dWdjA4xGRYG7SnRga2GyC9wFmkC64npIvnQQYizD2NQ/edit?tab=t.0)
+
+[Programming Planning Document](https://docs.google.com/document/d/1JNd9rQi58S-O2Ss6KbTQ3FcP-HhZHSv_BTzB1oUUAZE/edit?tab=t.0)
