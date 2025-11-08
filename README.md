@@ -8,6 +8,7 @@
 - Ziqing Zhu - zikoole
 - Bora Vanli - bvanli
 - Dhruv Sehgal - dhrutube
+- Shivani Rajanala - Shiv-Code123
 - Abhay Korlapati - abhay784
 - Siddhant Gulati - Sid6154
 # Links
