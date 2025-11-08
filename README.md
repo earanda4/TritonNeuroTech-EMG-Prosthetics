@@ -1,4 +1,4 @@
-# TritonNeuroTech-EMG-Prostethics
+# TritonNeuroTech-EMG-Prosthetics
 
 # Collaborators (Add your name and GitHub user):
 - Enrique Aranda - earanda4
