@@ -5,3 +5,5 @@ r# TritonNeuroTech-EMG-Prostethics
 - Skye Belcher - skyebel
 - Peter Little - PeterLittle670
 - Byron Chen - HashbrownPNG
+
+#Links
