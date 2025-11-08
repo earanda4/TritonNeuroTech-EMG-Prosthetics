@@ -1,11 +1,4 @@
 # Triton-NeurotTech-EMG-Prostethics
 
 # Collaborators:
-## Enrique Aranda - earanda4
-##
-##
-##
-##
-##
-##
-##
+- Enrique Aranda - earanda4
