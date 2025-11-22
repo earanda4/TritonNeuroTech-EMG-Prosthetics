@@ -10,7 +10,7 @@
 - Dhruv Sehgal - dhrutube
 - Shivani Rajanala - Shiv-Code123
 - Abhay Korlapati - abhay784
-- Siddhant Gulati - Sid6154
+- Siddhant Gulati (Sid6154)
 - Rishab Kolan - rkolan-alt
 # Links
 
