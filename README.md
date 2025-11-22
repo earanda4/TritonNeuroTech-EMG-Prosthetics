@@ -5,7 +5,7 @@
 - Skye Belcher (skyebel)
 - Peter Little (PeterLittle670)
 - Byron Chen - HashbrownPNG
-- Ziqing Zhu - zikoole
+- Ziqing Zhu (zikoole)
 - Bora Vanli (bvanli)
 - Dhruv Sehgal - dhrutube
 - Shivani Rajanala - Shiv-Code123
