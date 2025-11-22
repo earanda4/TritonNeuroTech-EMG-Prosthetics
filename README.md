@@ -12,6 +12,7 @@
 - Abhay Korlapati - abhay784
 - Siddhant Gulati - Sid6154
 - Rishab Kolan - rkolan-alt
+- Tristan Lee (tmlee06)
 # Links
 
 
