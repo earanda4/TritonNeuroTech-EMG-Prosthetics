@@ -44,7 +44,7 @@ Maybe model with Ansys? (bit of a stretch but can look into it)
 
 
 # Collaborators:
-- Enrique Aranda - earanda4
+- Enrique Aranda (earanda4)
 - Skye Belcher (skyebel)
 - Peter Little (PeterLittle670)
 - Byron Chen - HashbrownPNG
