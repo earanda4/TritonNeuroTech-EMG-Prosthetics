@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 from dataset import EMGDataset
 from util import record_emg
-from mindrove.board_shim import BoardShim, MindRoveInputParams, BoardIds
+# from mindrove.board_shim import BoardShim, MindRoveInputParams, BoardIds (not crash)
 import torchmetrics
 import tkinter as tk
 from tkinter import font, ttk
@@ -145,11 +145,12 @@ class VaderGUI:
 
     def init_hardware(self):
         if not self.hardware_initialized:
-            board_id = BoardIds.MINDROVE_WIFI_BOARD
-            params = MindRoveInputParams()
-            self.board_shim = BoardShim(board_id, params)
-            self.board_shim.prepare_session()
-            self.board_shim.start_stream(450000)
+            # board_id = BoardIds.MINDROVE_WIFI_BOARD
+            # params = MindRoveInputParams()
+            # self.board_shim = BoardShim(board_id, params)
+            # self.board_shim.prepare_session()
+            # self.board_shim.start_stream(450000)
+            self.hardware_initialized = True
             
             # Replace with your serial port
             # self.ser = serial.Serial("/dev/cu.usbmodem11301", 9600)
