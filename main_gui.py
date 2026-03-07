@@ -1,4 +1,3 @@
-
 # sid changes 
 import threading
 import time
@@ -6,7 +5,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from dataset import EMGDataset
+from dataset import EMGDataset  # Ensure dataset.py exists with EMGDataset class
 from util import record_emg
 from mindrove.board_shim import BoardShim, MindRoveInputParams, BoardIds
 import torchmetrics
@@ -209,14 +208,15 @@ class VaderGUI:
                 counts[name] = count
         
         counter_text = " | ".join([f"{name}: {counts.get(name, 0)}" for name in STATE_DICT.values()])
-        self.counter_label.config(text=counter_text)
+        self.root.after(0, lambda: self.counter_label.config(text=counter_text))  # Thread-safe update
     
     def _update_status(self):
         """Update status bar with current state"""
         if self.stop_btn.cget('state') == 'normal':
-            self.status_bar.config(text="Running... Press SPACE to stop")
+            text = "Running... Press SPACE to stop"
         else:
-            self.status_bar.config(text="Ready | Press SPACE to stop | S: Start | G: General Model | A: Aggregate")
+            text = "Ready | Press SPACE to stop | S: Start | G: General Model | A: Aggregate"
+        self.root.after(0, lambda: self.status_bar.config(text=text))  # Thread-safe update
     
     def _on_spacebar(self):
         """Handle spacebar press - stop if running"""
@@ -249,6 +249,14 @@ class VaderGUI:
 
     def _save_general_model(self):
         torch.save(self.general_model.state_dict(), GENERAL_MODEL_PATH)
+
+    def _save_custom_model(self):
+        """Save the custom model trained in run_sequence"""
+        torch.save(self.model.state_dict(), "custom_model.pt")
+
+    def _save_aggregate_model(self):
+        """Save the aggregated model"""
+        torch.save(self.aggregate_model.state_dict(), "aggregate_model.pt")
 
     def _save_window(self, cls_index, window):
         class_name = STATE_DICT[cls_index]
@@ -332,7 +340,7 @@ class VaderGUI:
 
     def run_sequence(self):
         try:
-            self.update_display("Initializing hardware...")
+            self.root.after(0, lambda: self.update_display("Initializing hardware..."))  # Thread-safe
             self.init_hardware()
             num_classes = len(STATE_DICT)
             windows_per_class = NUM_SAMPLES // SAMPLES_PER_POINT
@@ -348,18 +356,18 @@ class VaderGUI:
                     # self.ser.write(f"{cls}\n".encode())
                     for cnt in (3,2,1):
                         if self.stop_event.is_set(): return self.reset_ui()
-                        self.update_display(f"{state} in {cnt}...")
+                        self.root.after(0, lambda c=cnt, s=state: self.update_display(f"{s} in {c}..."))  # Thread-safe
                         time.sleep(1)
                     for w in range(windows_per_class):
                         if self.stop_event.is_set(): return self.reset_ui()
-                        self.update_display(f"Collecting {state} ({w+1}/{windows_per_class})")
-                        self.progress['value'] = w+1
+                        self.root.after(0, lambda w=w, wp=windows_per_class, s=state: self.update_display(f"Collecting {s} ({w+1}/{wp})"))  # Thread-safe
+                        self.root.after(0, lambda v=w+1: self.progress.config(value=v))  # Thread-safe
                         rot, win = record_emg(self.board_shim, SAMPLES_PER_POINT, NUM_CHANNELS, SAMPLING_RATE)
                         self._save_window(cls, win)
                         data[idx] = win
                         labels[idx] = cls
                         idx += 1
-                    self.progress['value'] = 0
+                    self.root.after(0, lambda: self.progress.config(value=0))  # Thread-safe
 
             # Evaluate models
             self.update_display("Training/Evaluating...")
@@ -380,7 +388,8 @@ class VaderGUI:
                     self.model.build(xb, yb)
                     self.general_model.build(xb, yb, lr=0.1)
             self.model.normalize()
-            self._save_general_model
+            self._save_general_model()
+            self._save_custom_model()  # Save custom model
             results = {}
             for name, m in [("Custom", self.model), ("General", self.general_model)]:
                 acc = torchmetrics.Accuracy(task="multiclass", num_classes=num_classes).to(self.device)
@@ -410,7 +419,7 @@ class VaderGUI:
             time.sleep(2)
             self.run_custom_inference()
         except Exception as e:
-            self.update_display(f"Error: {e}")
+            self.root.after(0, lambda e=e: self.update_display(f"Error: {e}"))  # Thread-safe
         finally:
             if self.board_shim:
                 self.board_shim.stop_stream()
@@ -421,14 +430,14 @@ class VaderGUI:
     def run_custom_inference(self, loop=True):
         try:
             if not self.hardware_initialized:
-                self.update_display("Initializing hardware for custom inference...")
+                self.root.after(0, lambda: self.update_display("Initializing hardware for custom inference..."))  # Thread-safe
                 self.init_hardware()
-            self.update_display("Starting custom inference...")
-            self.progress['value'] = 0
+            self.root.after(0, lambda: self.update_display("Starting custom inference..."))  # Thread-safe
+            self.root.after(0, lambda: self.progress.config(value=0))  # Thread-safe
             while loop and not self.stop_event.is_set():
                 self._inference_step(self.model)
         except Exception as e:
-            self.update_display(f"Error: {e}")
+            self.root.after(0, lambda e=e: self.update_display(f"Error: {e}"))  # Thread-safe
         finally:
             if self.board_shim:
                 self.board_shim.stop_stream()
@@ -439,17 +448,17 @@ class VaderGUI:
     def run_general_inference(self):
         try:
             if not self.hardware_initialized:
-                self.update_display("Initializing hardware for general inference...")
+                self.root.after(0, lambda: self.update_display("Initializing hardware for general inference..."))  # Thread-safe
                 self.init_hardware()
             model_copy = HDClassifier(DIMENSIONS, len(STATE_DICT), NUM_CHANNELS).to(self.device)
             model_copy.load_state_dict(self.general_model.state_dict())
             model_copy.normalize()
-            self.update_display("Starting general inference...")
-            self.progress['value'] = 0
+            self.root.after(0, lambda: self.update_display("Starting general inference..."))  # Thread-safe
+            self.root.after(0, lambda: self.progress.config(value=0))  # Thread-safe
             while not self.stop_event.is_set():
                 self._inference_step(model_copy)
         except Exception as e:
-            self.update_display(f"Error: {e}")
+            self.root.after(0, lambda e=e: self.update_display(f"Error: {e}"))  # Thread-safe
         finally:
             if self.board_shim:
                 self.board_shim.stop_stream()
@@ -459,7 +468,7 @@ class VaderGUI:
 
     def run_aggregate(self):
         try:
-            self.update_display("Aggregating calibration data...")
+            self.root.after(0, lambda: self.update_display("Aggregating calibration data..."))  # Thread-safe
             ds = load_calibration_dataset()
             loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True)
             agg_model = HDClassifier(DIMENSIONS, len(STATE_DICT), NUM_CHANNELS).to(self.device)
@@ -470,28 +479,31 @@ class VaderGUI:
                     agg_model.build(X, Y)
             agg_model.normalize()
             self.aggregate_model = agg_model
-            self.update_display(f"Aggregated model built ({len(loader.dataset)} samples)")
+            self._save_aggregate_model()  # Save aggregate model
+            self.root.after(0, lambda l=len(loader.dataset): self.update_display(f"Aggregated model built ({l} samples)"))  # Thread-safe
             time.sleep(2)
         except Exception as e:
-            self.update_display(f"Error: {e}")
+            self.root.after(0, lambda e=e: self.update_display(f"Error: {e}"))  # Thread-safe
         finally:
             self.stop_event.set()
             self.reset_ui()
 
     def run_aggregate_inference(self):
         try:
+            if not hasattr(self, 'aggregate_model'):
+                raise AttributeError("Aggregate model not found. Run 'Aggregate Data' first.")
             if not self.hardware_initialized:
-                self.update_display("Initializing hardware for aggregate inference...")
+                self.root.after(0, lambda: self.update_display("Initializing hardware for aggregate inference..."))  # Thread-safe
                 self.init_hardware()
             model_copy = HDClassifier(DIMENSIONS, len(STATE_DICT), NUM_CHANNELS).to(self.device)
             model_copy.load_state_dict(self.aggregate_model.state_dict())
             model_copy.normalize()
-            self.update_display("Starting aggregate inference...")
-            self.progress['value'] = 0
+            self.root.after(0, lambda: self.update_display("Starting aggregate inference..."))  # Thread-safe
+            self.root.after(0, lambda: self.progress.config(value=0))  # Thread-safe
             while not self.stop_event.is_set():
                 self._inference_step(model_copy)
         except Exception as e:
-            self.update_display(f"Error: {e}")
+            self.root.after(0, lambda e=e: self.update_display(f"Error: {e}"))  # Thread-safe
         finally:
             if self.board_shim:
                 self.board_shim.stop_stream()
@@ -519,7 +531,7 @@ class VaderGUI:
         #     self.ser.write(f"{code}\n".encode())
         # else:
         #     self.ser.write(f"{cls}\n".encode())
-        self.update_display(f"Pose: {action}\nRotation: {rotation or 'None'}")
+        self.root.after(0, lambda a=action, r=rotation: self.update_display(f"Pose: {a}\nRotation: {r or 'None'}"))  # Thread-safe
 
     def update_display(self, text):
         self.display.config(text=text)
@@ -533,7 +545,7 @@ class VaderGUI:
         self.aggregate_infer_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.update_display("Welcome to Vader!")
-        self.progress['value'] = 0
+        self.progress.config(value=0)
         self.stop_event.clear()
         self._update_status()
 
