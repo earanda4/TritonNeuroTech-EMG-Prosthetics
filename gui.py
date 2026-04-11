@@ -142,12 +142,53 @@ class VaderGUI:
         tk.Button(btn_frame, text="Infer Aggregate",
                   command=self.start_aggregate_inference,
                   bg='red').pack(side='left', padx=5)
+        
+        tk.Button(btn_frame, text="Test Connection",
+                command=self.test_connection,
+                bg='green').pack(side='left', padx=5)
 
         self.stop_btn = tk.Button(btn_frame,
                                   text="Stop",
                                   command=self.stop_process,
                                   bg='red')
         self.stop_btn.pack(side='left', padx=5)
+
+    # ====================================================
+    # ==== Test ==========================================
+    # ====================================================
+    def test_connection(self):
+        """Force-start hardware and stream a few samples to verify data flow."""
+        self.update_display("Testing connection...")
+        self.stop_event.clear()
+
+        def _test():
+            try:
+                self.init_hardware()
+                time.sleep(1)  # let the buffer fill
+
+                if self.board_shim is None:
+                    self.update_display("No board connected.")
+                    return
+
+                count = self.board_shim.get_board_data_count()
+                if count == 0:
+                    self.update_display("Board found but\nno data flowing!")
+                    return
+
+                data = self.board_shim.get_board_data(min(count, 50))
+                emg = np.array(data[:NUM_CHANNELS])
+                rms_per_channel = np.sqrt(np.mean(emg**2, axis=1))
+
+                lines = ["Connection OK!", f"Samples received: {count}"]
+                for ch, rms in enumerate(rms_per_channel):
+                    lines.append(f"Ch{ch+1} RMS: {rms:.1f}")
+
+                self.update_display("\n".join(lines))
+
+            except Exception as e:
+                self.update_display(f"Connection failed:\n{e}")
+
+        threading.Thread(target=_test, daemon=True).start()
 
     # ====================================================
     # ==== Thread-safe UI update =========================
@@ -273,15 +314,18 @@ class VaderGUI:
         if self.hardware_initialized:
             return
         # ---- Use CSV replay instead of random noise ----
-        from csv_board import CSVBoard
-        self.board_shim = CSVBoard("EMG_mindrove60hz_5_10.csv")
+        # from csv_board import CSVBoard
+        # self.board_shim = CSVBoard("EMG_mindrove60hz_5_10.csv")
     # ------------------------------------------------
         #board_id = BoardIds.MINDROVE_WIFI_BOARD
         #params = MindRoveInputParams()
         # Uncomment below when real hardware is connected:
-        # self.board_shim = BoardShim(board_id, params)
-        # self.board_shim.prepare_session()
-        # self.board_shim.start_stream(450000)
+
+        board_id = BoardIds.MINDROVE_WIFI_BOARD
+        params = MindRoveInputParams()
+        self.board_shim = BoardShim(board_id, params)
+        self.board_shim.prepare_session()
+        self.board_shim.start_stream(450000)
 
         self.hardware_initialized = True
         self.start_live_plot()
