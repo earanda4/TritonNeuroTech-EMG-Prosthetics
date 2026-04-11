@@ -4,32 +4,46 @@ import os
 import numpy as np
 import scipy
 import torch
-from torch.utils.data import DataLoader
-from dataset import EMGDataset
 from util import record_emg
 from mindrove.board_shim import BoardShim, MindRoveInputParams, BoardIds
-import torchmetrics
 import tkinter as tk
 from tkinter import font, ttk
-from model import HDClassifier
+from mindrove_bilstm import FinalPushLSTM, BILSTM_MODEL_PATH, BILSTM_NUM_CLASSES
 import scipy.signal as signal
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 # ================= CONSTANTS =================
-NUM_SAMPLES = 5000
-NUM_CHANNELS = 8
+NUM_CHANNELS = 4
 SAMPLES_PER_POINT = 50
-BATCH_SIZE = 1
-STATE_DICT = {0: "Relax", 1: "Clench", 2: "Triton", 3: "L(ove)", 4: "Surfer"}
 SAMPLING_RATE = 500
-DIMENSIONS = 10000
-GENERAL_MODEL_PATH = "general_model.pt"
 CALIB_DIR = "calibration_data"
 
+# BiLSTM uses 4 channels; labels match the training data in mindrove_bilstm.py
+BILSTM_STATE_DICT = {0: "Relax", 1: "Fist", 2: "Rock", 3: "Peace", 4: "Shaka"}
+
 os.makedirs(CALIB_DIR, exist_ok=True)
-for cls_name in STATE_DICT.values():
-    os.makedirs(os.path.join(CALIB_DIR, cls_name), exist_ok=True)
+
+THEMES = {
+    'Dark': {
+        'bg': 'black',       'fg': 'red',        'text_fg': 'white',
+        'btn_bg': 'red',     'bilstm_bg': 'dark red', 'bilstm_fg': 'white',
+        'check_fg': 'white', 'plot_bg': 'black',  'plot_fg': 'white',
+        'emg_color': 'cyan', 'rms_color': 'yellow',
+    },
+    'Light': {
+        'bg': '#f0f0f0',     'fg': '#8b0000',    'text_fg': '#111111',
+        'btn_bg': '#c0392b', 'bilstm_bg': '#7b241c', 'bilstm_fg': 'white',
+        'check_fg': '#111111', 'plot_bg': '#ffffff', 'plot_fg': '#111111',
+        'emg_color': '#0055cc', 'rms_color': '#cc6600',
+    },
+    'High Contrast': {
+        'bg': 'black',       'fg': 'yellow',     'text_fg': 'yellow',
+        'btn_bg': '#555500', 'bilstm_bg': '#333300', 'bilstm_fg': 'yellow',
+        'check_fg': 'yellow','plot_bg': 'black',  'plot_fg': 'yellow',
+        'emg_color': 'white','rms_color': 'yellow',
+    },
+}
 
 
 class VaderGUI:
@@ -54,10 +68,10 @@ class VaderGUI:
             else "cpu"
         )
 
-        self.model = HDClassifier(DIMENSIONS, len(STATE_DICT), NUM_CHANNELS).to(self.device)
-        self.general_model = HDClassifier(DIMENSIONS, len(STATE_DICT), NUM_CHANNELS).to(self.device)
-        self._load_general_model()
+        self.bilstm_model = FinalPushLSTM(input_size=NUM_CHANNELS, num_classes=BILSTM_NUM_CLASSES).to(self.device)
+        self._load_bilstm_model()
 
+        self.current_theme = 'Dark'
         self.title_font = font.Font(size=28, weight='bold')
         self.button_font = font.Font(size=14)
 
@@ -75,21 +89,20 @@ class VaderGUI:
         self.display.pack(pady=10)
 
         # ==== PROGRESS BAR ====
-        style = ttk.Style()
-        style.theme_use('classic')
-        style.configure('Red.Horizontal.TProgressbar',
-                        troughcolor='black',
-                        background='red')
+        self.pb_style = ttk.Style()
+        self.pb_style.theme_use('classic')
+        self.pb_style.configure('Themed.Horizontal.TProgressbar',
+                                troughcolor='black', background='red')
 
         self.progress = ttk.Progressbar(
             root,
-            style='Red.Horizontal.TProgressbar',
+            style='Themed.Horizontal.TProgressbar',
             orient='horizontal',
             mode='determinate'
         )
         self.progress.pack(fill='x', padx=50, pady=10)
 
-        # ==== FIX: Bandpass upper cutoff must be < Nyquist (250 Hz) ====
+        # ==== Bandpass / notch filters ====
         nyq = SAMPLING_RATE / 2
         self.bp_b, self.bp_a = signal.butter(4, [20 / nyq, 200 / nyq], btype='band')
         self.notch_b, self.notch_a = signal.iirnotch(60 / nyq, Q=30)
@@ -110,11 +123,12 @@ class VaderGUI:
         self._init_waveform_panel()
 
         # ==== Channel toggle UI ====
-        toggle_frame = tk.Frame(root, bg='black')
-        toggle_frame.pack()
+        self.toggle_frame = tk.Frame(root, bg='black')
+        self.toggle_frame.pack()
+        self.channel_checkboxes = []
         for ch in range(NUM_CHANNELS):
             cb = tk.Checkbutton(
-                toggle_frame,
+                self.toggle_frame,
                 text=f"Ch {ch + 1}",
                 variable=self.channel_enabled[ch],
                 fg='white',
@@ -122,36 +136,32 @@ class VaderGUI:
                 selectcolor='black'
             )
             cb.pack(side='left')
+            self.channel_checkboxes.append(cb)
 
         # ==== BUTTONS ====
-        btn_frame = tk.Frame(root, bg='black')
-        btn_frame.pack(pady=10)
+        self.btn_frame = tk.Frame(root, bg='black')
+        self.btn_frame.pack(pady=10)
 
-        tk.Button(btn_frame, text="Start Calibration",
-                  command=self.start_process,
-                  bg='red').pack(side='left', padx=5)
+        self.start_cal_btn = tk.Button(self.btn_frame, text="Start Calibration",
+                                       command=self.start_process, bg='red')
+        self.start_cal_btn.pack(side='left', padx=5)
 
-        tk.Button(btn_frame, text="Use General Model",
-                  command=self.start_general_inference,   # FIX: method now exists
-                  bg='red').pack(side='left', padx=5)
+        self.bilstm_btn = tk.Button(self.btn_frame, text="BiLSTM Model",
+                                    command=self.start_bilstm_inference,
+                                    bg='dark red', fg='white')
+        self.bilstm_btn.pack(side='left', padx=5)
 
-        tk.Button(btn_frame, text="Aggregate",
-                  command=self.start_aggregate,           # FIX: method now exists
-                  bg='red').pack(side='left', padx=5)
+        self.test_btn = tk.Button(self.btn_frame, text="Test Connection",
+                                  command=self.test_connection, bg='green')
+        self.test_btn.pack(side='left', padx=5)
 
-        tk.Button(btn_frame, text="Infer Aggregate",
-                  command=self.start_aggregate_inference,
-                  bg='red').pack(side='left', padx=5)
-        
-        tk.Button(btn_frame, text="Test Connection",
-                command=self.test_connection,
-                bg='green').pack(side='left', padx=5)
-
-        self.stop_btn = tk.Button(btn_frame,
-                                  text="Stop",
-                                  command=self.stop_process,
-                                  bg='red')
+        self.stop_btn = tk.Button(self.btn_frame, text="Stop",
+                                  command=self.stop_process, bg='red')
         self.stop_btn.pack(side='left', padx=5)
+
+        tk.Button(self.btn_frame, text="Accessibility",
+                  command=self._open_accessibility,
+                  bg='gray', fg='white').pack(side='left', padx=5)
 
     # ====================================================
     # ==== Test ==========================================
@@ -293,10 +303,11 @@ class VaderGUI:
                             mode='same')
             )
 
-            self.rms_lines[ch].set_data(
-                np.arange(len(signal_data)),
-                rms + offset
-            )
+            show_rms = getattr(self, 'show_rms', None)
+            if show_rms is None or show_rms.get():
+                self.rms_lines[ch].set_data(np.arange(len(signal_data)), rms + offset)
+            else:
+                self.rms_lines[ch].set_data([], [])
 
             # Bad-channel detection (turns line red if near-flat signal)
             if np.var(signal_data) < self.var_threshold:
@@ -334,33 +345,64 @@ class VaderGUI:
     # ==== Model persistence =============================
     # ====================================================
 
-    def _save_general_model(self):
-        torch.save(self.general_model.state_dict(), GENERAL_MODEL_PATH)
-
-    def _load_general_model(self):
-        if os.path.exists(GENERAL_MODEL_PATH):
-            self.general_model.load_state_dict(
-                torch.load(GENERAL_MODEL_PATH, map_location=self.device)
+    def _load_bilstm_model(self):
+        if os.path.exists(BILSTM_MODEL_PATH):
+            self.bilstm_model.load_state_dict(
+                torch.load(BILSTM_MODEL_PATH, map_location=self.device)
             )
+            self.bilstm_model.eval()
+            print(f"BiLSTM model loaded from {BILSTM_MODEL_PATH}")
+        else:
+            print(f"No BiLSTM model found at {BILSTM_MODEL_PATH}. Train it by running mindrove_bilstm.py.")
 
     # ====================================================
-    # ==== Inference helpers =============================
+    # ==== BiLSTM inference ==============================
     # ====================================================
 
-    def _inference_step(self, model):
-        """Run one inference step and update display with smoothed prediction."""
+    def start_bilstm_inference(self):
+        """Start inference using the trained BiLSTM model."""
+        if not os.path.exists(BILSTM_MODEL_PATH):
+            self.update_display("No BiLSTM model found.\nRun mindrove_bilstm.py first.")
+            return
+        self.stop_event.clear()
+        self.pred_history.clear()
+        self.update_display("Running BiLSTM Model...")
+        threading.Thread(
+            target=self._ensure_hardware_then,
+            args=(lambda: self._bilstm_inference_loop(),),
+            daemon=True
+        ).start()
+
+    def _bilstm_inference_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                self._bilstm_inference_step()
+            except Exception as e:
+                self.update_display(f"BiLSTM error:\n{e}")
+                break
+
+    def _bilstm_inference_step(self):
         start_time = time.time()
 
-        rot, win = record_emg(
+        _, win = record_emg(
             self.board_shim,
             SAMPLES_PER_POINT,
             NUM_CHANNELS,
             SAMPLING_RATE
         )
 
-        xb = torch.tensor(win, dtype=torch.float32).unsqueeze(0).to(self.device)
+        # win shape: (NUM_CHANNELS, SAMPLES_PER_POINT) — take first 4 channels
+        emg = np.array(win[:NUM_CHANNELS], dtype=np.float32).T  # (SAMPLES_PER_POINT, 4)
 
-        out = model(xb)
+        # Per-window z-score normalization to match training StandardScaler behaviour
+        mean = emg.mean(axis=0, keepdims=True)
+        std = emg.std(axis=0, keepdims=True) + 1e-8
+        emg = (emg - mean) / std
+
+        xb = torch.tensor(emg, dtype=torch.float32).unsqueeze(0).to(self.device)  # (1, seq, 4)
+
+        with torch.no_grad():
+            out = self.bilstm_model(xb)
         cls = out.argmax().item()
 
         self.pred_history.append(cls)
@@ -371,105 +413,113 @@ class VaderGUI:
         latency = (time.time() - start_time) * 1000
 
         self.update_display(
-            f"Pose: {STATE_DICT[final_cls]}\n"
+            f"Pose: {BILSTM_STATE_DICT[final_cls]}\n"
             f"Latency: {latency:.1f} ms"
         )
 
-    def _run_inference_loop(self, model):
-        """Continuously run inference until stop_event is set."""
-        while not self.stop_event.is_set():
-            try:
-                self._inference_step(model)
-            except Exception as e:
-                self.update_display(f"Inference error:\n{e}")
-                break
-
     # ====================================================
-    # ==== FIX: start_general_inference (was missing) ====
+    # ==== Accessibility ================================
     # ====================================================
 
-    def start_general_inference(self):
-        """Start inference using the pre-trained general model."""
-        self.stop_event.clear()
-        self.pred_history.clear()
-        self.update_display("Running General Model...")
-        threading.Thread(
-            target=self._ensure_hardware_then,
-            args=(lambda: self._run_inference_loop(self.general_model),),
-            daemon=True
-        ).start()
+    def _open_accessibility(self):
+        win = tk.Toplevel(self.root)
+        win.title("Accessibility")
+        t = THEMES[self.current_theme]
+        win.configure(bg=t['bg'])
 
-    # ====================================================
-    # ==== FIX: start_aggregate (was missing) ============
-    # ====================================================
+        def section(label):
+            tk.Label(win, text=label, bg=t['bg'], fg=t['text_fg'],
+                     font=('Arial', 11, 'bold')).pack(anchor='w', padx=14, pady=(12, 2))
 
-    def start_aggregate(self):
-        """
-        Aggregate calibration data from CALIB_DIR to build/update a model
-        that combines the general model weights with user-specific data.
-        This trains self.aggregate_model and saves it.
-        """
-        self.stop_event.clear()
-        self.update_display("Aggregating calibration data...")
-        threading.Thread(target=self._aggregate_worker, daemon=True).start()
+        # ---- Font size ----
+        section("Display font size")
+        font_var = tk.IntVar(value=self.title_font.cget('size'))
+        size_frame = tk.Frame(win, bg=t['bg'])
+        size_frame.pack(fill='x', padx=14)
+        tk.Label(size_frame, text="A", bg=t['bg'], fg=t['text_fg'],
+                 font=('Arial', 9)).pack(side='left')
+        tk.Scale(size_frame, from_=14, to=48, orient='horizontal',
+                 variable=font_var, bg=t['bg'], fg=t['text_fg'],
+                 troughcolor=t['plot_bg'], highlightthickness=0,
+                 command=lambda v: self._apply_font_size(int(v))
+                 ).pack(side='left', fill='x', expand=True)
+        tk.Label(size_frame, text="A", bg=t['bg'], fg=t['text_fg'],
+                 font=('Arial', 18)).pack(side='left')
 
-    def _aggregate_worker(self):
-        try:
-            # Collect all saved calibration samples
-            all_data, all_labels = [], []
-            for label_idx, cls_name in STATE_DICT.items():
-                cls_dir = os.path.join(CALIB_DIR, cls_name)
-                for fname in os.listdir(cls_dir):
-                    if fname.endswith('.npy'):
-                        arr = np.load(os.path.join(cls_dir, fname))
-                        all_data.append(arr)
-                        all_labels.append(label_idx)
+        # ---- Theme ----
+        section("Color theme")
+        theme_var = tk.StringVar(value=self.current_theme)
+        for name in THEMES:
+            tk.Radiobutton(win, text=name, variable=theme_var, value=name,
+                           bg=t['bg'], fg=t['text_fg'], selectcolor=t['bg'],
+                           activebackground=t['bg'], activeforeground=t['text_fg'],
+                           command=lambda n=name: self._apply_theme(n)
+                           ).pack(anchor='w', padx=28)
 
-            if not all_data:
-                self.update_display("No calibration data found.\nRun calibration first.")
-                return
+        # ---- Waveform scale ----
+        section("Waveform channel spacing")
+        scale_var = tk.IntVar(value=self.offset_step)
+        tk.Scale(win, from_=50, to=800, orient='horizontal',
+                 variable=scale_var, bg=t['bg'], fg=t['text_fg'],
+                 troughcolor=t['plot_bg'], highlightthickness=0,
+                 command=lambda v: self._apply_waveform_scale(int(v))
+                 ).pack(fill='x', padx=14)
 
-            dataset = EMGDataset(all_data, all_labels)
-            loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+        # ---- RMS overlay toggle ----
+        section("RMS overlay")
+        self.show_rms = getattr(self, 'show_rms', tk.BooleanVar(value=True))
+        tk.Checkbutton(win, text="Show RMS envelope", variable=self.show_rms,
+                       bg=t['bg'], fg=t['text_fg'], selectcolor=t['bg'],
+                       activebackground=t['bg'], activeforeground=t['text_fg']
+                       ).pack(anchor='w', padx=28)
 
-            # Start from general model weights
-            self.aggregate_model = HDClassifier(
-                DIMENSIONS, len(STATE_DICT), NUM_CHANNELS
-            ).to(self.device)
-            self.aggregate_model.load_state_dict(self.general_model.state_dict())
+        tk.Button(win, text="Close", command=win.destroy,
+                  bg=t['btn_bg'], fg='white').pack(pady=14)
 
-            # Simple HD retraining pass
-            self.aggregate_model.train()
-            total = len(loader)
-            for i, (xb, yb) in enumerate(loader):
-                xb = xb.to(self.device)
-                yb = yb.to(self.device)
-                self.aggregate_model.train_step(xb, yb)
-                self.update_progress(int((i + 1) / total * 100))
+    def _apply_font_size(self, size):
+        self.title_font.configure(size=size)
 
-            self.update_display("Aggregate model ready!")
-            self.update_progress(100)
+    def _apply_waveform_scale(self, step):
+        self.offset_step = step
+        self.ax.set_ylim(-step, NUM_CHANNELS * step)
 
-        except Exception as e:
-            self.update_display(f"Aggregate error:\n{e}")
+    def _apply_theme(self, name):
+        self.current_theme = name
+        t = THEMES[name]
 
-    # ====================================================
-    # ==== start_aggregate_inference =====================
-    # ====================================================
+        # Root + frames
+        self.root.configure(bg=t['bg'])
+        self.toggle_frame.configure(bg=t['bg'])
+        self.btn_frame.configure(bg=t['bg'])
 
-    def start_aggregate_inference(self):
-        """Start inference using the aggregated user model."""
-        if not hasattr(self, 'aggregate_model'):
-            self.update_display("No aggregate model found.\nRun Aggregate first.")
-            return
-        self.stop_event.clear()
-        self.pred_history.clear()
-        self.update_display("Running Aggregate Model...")
-        threading.Thread(
-            target=self._ensure_hardware_then,
-            args=(lambda: self._run_inference_loop(self.aggregate_model),),
-            daemon=True
-        ).start()
+        # Display label
+        self.display.configure(bg=t['bg'], fg=t['fg'])
+
+        # Progress bar
+        self.pb_style.configure('Themed.Horizontal.TProgressbar',
+                                troughcolor=t['plot_bg'], background=t['btn_bg'])
+
+        # Channel checkboxes
+        for cb in self.channel_checkboxes:
+            cb.configure(bg=t['bg'], fg=t['check_fg'], selectcolor=t['bg'],
+                         activebackground=t['bg'], activeforeground=t['check_fg'])
+
+        # Action buttons
+        self.start_cal_btn.configure(bg=t['btn_bg'], fg='white')
+        self.bilstm_btn.configure(bg=t['bilstm_bg'], fg=t['bilstm_fg'])
+        self.test_btn.configure(bg='green', fg='white')
+        self.stop_btn.configure(bg=t['btn_bg'], fg='white')
+
+        # Matplotlib plot
+        self.ax.set_facecolor(t['plot_bg'])
+        self.fig.patch.set_facecolor(t['plot_bg'])
+        self.ax.set_title("Filtered EMG + RMS", color=t['plot_fg'])
+        self.ax.tick_params(colors=t['plot_fg'])
+        for line in self.lines:
+            line.set_color(t['emg_color'])
+        for rline in self.rms_lines:
+            rline.set_color(t['rms_color'])
+        self.canvas.draw_idle()
 
     # ====================================================
     # ==== CONTROL =======================================

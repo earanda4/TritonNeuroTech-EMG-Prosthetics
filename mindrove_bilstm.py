@@ -167,7 +167,11 @@ class FinalPushLSTM(nn.Module):
         out, _ = self.lstm(x)
         return self.fc(out[:, -1, :])
 
-def run_experiment(X, y, name):
+BILSTM_MODEL_PATH = os.path.join(base_path, 'bilstm_model.pt')
+BILSTM_WINDOW_SIZE = 15
+BILSTM_NUM_CLASSES = 5
+
+def run_experiment(X, y, name, save_path=None):
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     X_np, y_np = X.cpu().numpy(), y.cpu().numpy()
@@ -205,6 +209,11 @@ def run_experiment(X, y, name):
         history['val_loss'].append(v_loss/len(val_loader)); history['val_acc'].append((v_corr/v_total)*100)
         print(f"Epoch {epoch+1:02d} | T-Loss: {history['train_loss'][-1]:.3f} | V-Acc: {history['val_acc'][-1]:.2f}%")
 
+    # --- SAVE MODEL ---
+    out_path = save_path or BILSTM_MODEL_PATH
+    torch.save(model.state_dict(), out_path)
+    print(f"Model saved to {out_path}")
+
     # --- VISUALIZATION ---
     plt.figure(figsize=(18, 5))
     plt.subplot(1, 3, 1); plt.plot(history['train_loss'], label='Train'); plt.plot(history['val_loss'], label='Val'); plt.title('Loss'); plt.legend()
@@ -217,32 +226,33 @@ def run_experiment(X, y, name):
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues'); plt.title(f'CM: {name}'); plt.show()
     return history['val_acc'][-1]
 
-# --- 6. EXECUTION ---
-summary_report = {}
+if __name__ == '__main__':
+    # --- 6. EXECUTION ---
+    summary_report = {}
 
-# 1. New 60Hz Recording (Custom Filter)
-csv_60hz = os.path.join(base_path, 'EMG_Mindrove_60hz_20sec.csv')
-if os.path.exists(csv_60hz):
-    df_60 = load_continuous_60hz_custom_filter(csv_60hz)
-    Xc, yc = create_sequences(df_60, window_size=15, step=5)
-    summary_report["Continuous_60Hz"] = run_experiment(Xc, yc, "60Hz_New_Dataset")
+    # 1. New 60Hz Recording (Custom Filter)
+    csv_60hz = os.path.join(base_path, 'EMG_Mindrove_60hz_20sec.csv')
+    if os.path.exists(csv_60hz):
+        df_60 = load_continuous_60hz_custom_filter(csv_60hz)
+        Xc, yc = create_sequences(df_60, window_size=15, step=5)
+        summary_report["Continuous_60Hz"] = run_experiment(Xc, yc, "60Hz_New_Dataset")
 
-# 2. Original Mindrove Subjects
-# all_subjects_data = load_all_subjects('/content/mindrove_data')
-# for sub_name, df in all_subjects_data.items():
-#     X, y = create_sequences(df, window_size=50, step=10)
-#     summary_report[sub_name] = run_experiment(X, y, sub_name)
+    # 2. Original Mindrove Subjects
+    # all_subjects_data = load_all_subjects('/content/mindrove_data')
+    # for sub_name, df in all_subjects_data.items():
+    #     X, y = create_sequences(df, window_size=50, step=10)
+    #     summary_report[sub_name] = run_experiment(X, y, sub_name)
 
-# # 3. UCI Dataset
-# df_u = load_uci_4ch('/content/uci_data')
-# if not df_u.empty:
-#     Xu, yu = create_sequences(df_u, window_size=100, step=20)
-#     summary_report["UCI"] = run_experiment(Xu, yu, "UCI_Static_Dataset")
+    # # 3. UCI Dataset
+    # df_u = load_uci_4ch('/content/uci_data')
+    # if not df_u.empty:
+    #     Xu, yu = create_sequences(df_u, window_size=100, step=20)
+    #     summary_report["UCI"] = run_experiment(Xu, yu, "UCI_Static_Dataset")
 
-# --- FINAL SUMMARY TABLE ---
-print("\n" + "="*40)
-print(f"{'EXPERIMENT':<20} | {'ACCURACY':<10}")
-print("-" * 40)
-for exp_name, final_acc in summary_report.items():
-    print(f"{exp_name:<20} | {final_acc:.2f}%")
-print("="*40)
+    # --- FINAL SUMMARY TABLE ---
+    print("\n" + "="*40)
+    print(f"{'EXPERIMENT':<20} | {'ACCURACY':<10}")
+    print("-" * 40)
+    for exp_name, final_acc in summary_report.items():
+        print(f"{exp_name:<20} | {final_acc:.2f}%")
+    print("="*40)
