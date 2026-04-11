@@ -168,7 +168,8 @@ class FinalPushLSTM(nn.Module):
         return self.fc(out[:, -1, :])
 
 def run_experiment(X, y, name):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     X_np, y_np = X.cpu().numpy(), y.cpu().numpy()
     X_train, X_val, y_train, y_val = train_test_split(X_np, y_np, test_size=0.2, random_state=42, stratify=y_np)
 
@@ -227,10 +228,10 @@ if os.path.exists(csv_60hz):
     summary_report["Continuous_60Hz"] = run_experiment(Xc, yc, "60Hz_New_Dataset")
 
 # 2. Original Mindrove Subjects
-all_subjects_data = load_all_subjects('/content/mindrove_data')
-for sub_name, df in all_subjects_data.items():
-    X, y = create_sequences(df, window_size=50, step=10)
-    summary_report[sub_name] = run_experiment(X, y, sub_name)
+# all_subjects_data = load_all_subjects('/content/mindrove_data')
+# for sub_name, df in all_subjects_data.items():
+#     X, y = create_sequences(df, window_size=50, step=10)
+#     summary_report[sub_name] = run_experiment(X, y, sub_name)
 
 # # 3. UCI Dataset
 # df_u = load_uci_4ch('/content/uci_data')
